@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optimisateur Ultimate Mushroom (Start 50)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+            background-color: #1e1e1e;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid #333;
+        }
+        h1 { color: #bb86fc; text-align: center; margin-bottom: 10px; }
+        p.subtitle { text-align: center; color: #a0a0a0; margin-bottom: 30px; font-size: 0.9em; }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+            background: #2c2c2c;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        
+        .full-width {
+            grid-column: span 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #333;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #03dac6; }
+        
+        input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: white;
+            border-radius: 5px;
+            font-size: 1.1em;
+            text-align: center;
+        }
+
+        
+        input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 15px;
+            cursor: pointer;
+            accent-color: #bb86fc;
+        }
+        .checkbox-label {
+            margin: 0;
+            color: #fff;
+            cursor: pointer;
+            font-size: 1.1em;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(45deg, #6200ea, #3700b3);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.2em;
+            cursor: pointer;
+            transition: transform 0.1s;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        button:hover { transform: scale(1.02); filter: brightness(1.2); }
+        button:active { transform: scale(0.98); }
+
+        .results {
+            display: none; 
+            text-align: center;
+            margin-top: 20px;
+            padding: 20px;
+            background: #252525;
+            border-radius: 10px;
+            border-left: 5px solid #03dac6;
+        }
+
+        .big-number { font-size: 3em; color: #03dac6; font-weight: bold; margin: 10px 0; }
+        .cash-number { font-size: 1.5em; color: #cf6679; }
+        .explanation { margin-top: 15px; color: #bbb; line-height: 1.5; text-align: left; }
+
+        canvas { margin-top: 30px; background: #222; border-radius: 10px; padding: 10px; }
+        
+        .loading { display: none; text-align: center; color: #bb86fc; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Optimisateur de Récolte</h1>
+    <p class="subtitle">Champigon Nocturne</p>
+
+    <div class="controls">
+        <div>
+            <label>Durée de la session (Heures IRL)</label>
+            <input type="number" id="sessionHours" value="8" min="1" max="24">
+        </div>
+        <div>
+            <label>Heure de départ (In-Game)</label>
+            <input type="number" id="startHour" value="8" min="0" max="23">
+        </div>
+        
+        <div class="full-width">
+            <input type="checkbox" id="policeActive" checked>
+            <label for="policeActive" class="checkbox-label">Bonus Police</label>
+        </div>
+    </div>
+
+    <button onclick="calculateStrategy()">Lancer l'optimisation</button>
+    <div id="loading" class="loading">Simulation en cours...</div>
+
+    <div id="results" class="results">
+        <div>La stratégie à suivre est :</div>
+        <div class="big-number">Laisser <span id="bestTarget">--</span></div>
+        <div class="cash-number">Gain Estimé : <span id="bestCash">--</span> €</div>
+        
+        <div class="explanation">
+            <strong> Que faire ? :</strong><br>
+            1. Ton champ est plein (50).<br>
+            2. Récolte immédiatement <span id="toHarvestCount" style="color:#fff; font-weight:bold">--</span> champignons pour descendre au seuil optimal.<br>
+            3. Il doit en rester <span id="targetRepeat" style="color:#fff; font-weight:bold">--</span>.<br>
+            4. Laisse remonter et répète.
+        </div>
+    </div>
+
+    <canvas id="chartCanvas"></canvas>
+</div>
+
+<script>
+
+const MAX_SLOTS = 50;
+const PRICE = 200;
+const SECONDS_PER_TICK = 25.2;
+const REAL_SECONDS_PER_GAME_HOUR_DAY = 150.0;
+const REAL_SECONDS_PER_GAME_HOUR_NIGHT = 75.0;
+
+// Fonction Vitesse 
+function getSpeed(gameHour, isPoliceActive) {
+    
+    
+    let base = (gameHour >= 20 || gameHour < 8) ? 2.0 : 0.5;
+    
+    // Bonus Police 
+    if (isPoliceActive) base += 0.5;
+
+    // Pas de fatigue génétique
+    let speed = base; 
+    
+    return Math.max(0.1, Math.min(speed, 3.0));
+}
+
+
+function advanceTime(currentHour, secondsPassed) {
+    let rate = 1.0 / REAL_SECONDS_PER_GAME_HOUR_DAY;
+    
+   
+    if (currentHour >= 22 || currentHour < 6) {
+        rate = 1.0 / REAL_SECONDS_PER_GAME_HOUR_NIGHT;
+    }
+    let newH = currentHour + (secondsPassed * rate);
+    if (newH >= 24.0) newH -= 24.0;
+    return newH;
+}
+
+
+function runSimulation(sessionHours, startHour, targetLeft, isPoliceActive) {
+    const sessionMinutes = sessionHours * 60;
+    const totalTicks = Math.floor((sessionMinutes * 60) / SECONDS_PER_TICK);
+    
+    
+    let mushrooms = [];
+    for(let i=0; i<50; i++) {
+        mushrooms.push({ state: Math.random() * 4.0, gen: 1 });
+    }
+
+    let cash = 0;
+    let currentHour = startHour;
+    const trigger = 50;
+
+    for(let t=0; t<totalTicks; t++) {
+        currentHour = advanceTime(currentHour, SECONDS_PER_TICK);
+
+        
+        if (mushrooms.length >= trigger) {
+            
+            
+            mushrooms.sort((a, b) => b.state - a.state);
+
+            let nbToKill = mushrooms.length - targetLeft;
+            if (nbToKill > 0) {
+                cash += nbToKill * PRICE;
+                mushrooms.splice(0, nbToKill);
+            }
+        }
+
+        
+        let snapshot = [...mushrooms]; 
+        let babiesToAdd = [];
+
+        snapshot.forEach(mush => {
+            if (mush.state < 5.0) {
+                
+                let speed = getSpeed(currentHour, isPoliceActive); 
+                let newState = mush.state + (speed / 10.0);
+                
+                
+                if (newState >= 5.0 && mush.state < 5.0) {
+                    
+                    if (mushrooms.length + babiesToAdd.length < MAX_SLOTS) {
+                        let roll = Math.random() * 100; 
+                        
+                        
+                        let mult = isPoliceActive ? 1.5 : 1.0;
+                        
+                        let count = 1;
+                        if (roll <= 20) count = Math.floor(3 * mult);
+                        else if (roll <= 60) count = Math.floor(2 * mult);
+                        else count = Math.floor(1 * mult);
+
+                        for(let k=0; k<count; k++) {
+                            babiesToAdd.push({ state: 0.0, gen: mush.gen + 1 });
+                        }
+                    }
+                }
+                
+                mush.state = newState;
+            }
+        });
+
+        
+        for(let baby of babiesToAdd) {
+            if (mushrooms.length < MAX_SLOTS) {
+                mushrooms.push(baby);
+            }
+        }
+    }
+    return cash;
+}
+
+
+let myChart = null;
+
+function calculateStrategy() {
+    
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('results').style.display = 'none';
+    
+    
+    const hours = parseFloat(document.getElementById('sessionHours').value);
+    const start = parseFloat(document.getElementById('startHour').value);
+   
+    const policeActive = document.getElementById('policeActive').checked;
+
+    
+    setTimeout(() => {
+        
+        let results = [];
+        let targets = [];
+        
+        for (let target = 30; target < 50; target++) {
+            
+            let cash = runSimulation(hours, start, target, policeActive);
+            results.push(cash);
+            targets.push(target);
+        }
+
+        
+        let maxCash = Math.max(...results);
+        let bestIndex = results.indexOf(maxCash);
+        let bestTarget = targets[bestIndex];
+
+        
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('results').style.display = 'block';
+
+        document.getElementById('bestTarget').innerText = bestTarget;
+        document.getElementById('targetRepeat').innerText = bestTarget;
+        document.getElementById('toHarvestCount').innerText = (50 - bestTarget);
+        document.getElementById('bestCash').innerText = new Intl.NumberFormat('fr-FR').format(maxCash);
+
+        
+        const ctx = document.getElementById('chartCanvas').getContext('2d');
+        
+        if (myChart) myChart.destroy(); 
+
+        myChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: targets,
+                datasets: [{
+                    label: 'Gain Total ($)',
+                    data: results,
+                    borderColor: '#bb86fc',
+                    backgroundColor: 'rgba(187, 134, 252, 0.2)',
+                    borderWidth: 3,
+                    pointBackgroundColor: targets.map(t => t === bestTarget ? '#03dac6' : '#bb86fc'),
+                    pointRadius: targets.map(t => t === bestTarget ? 8 : 4),
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.parsed.y.toLocaleString() + ' $';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { 
+                        title: { display: true, text: 'Champignons laissés en terre', color: '#888' },
+                        grid: { color: '#333' },
+                        ticks: { color: '#aaa' }
+                    },
+                    y: { 
+                        grid: { color: '#333' },
+                        ticks: { color: '#aaa' }
+                    }
+                }
+            }
+        });
+
+    }, 100);
+}
+</script>
+
+</body>
+</html>
